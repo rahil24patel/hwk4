@@ -1,0 +1,457 @@
+---
+title: "Homework 4"
+subtitle: "ECON 470, Spring 2026"
+author: "Rahil Patel"
+format:
+  pdf:
+    output-file: "patel-r-hwk4"
+    output-ext: "pdf"
+    header-includes:
+      - \usepackage{float}
+      - \floatplacement{table}{H}
+execute:
+  echo: false
+  warning: false
+---
+```{python}
+#| include: false
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import statsmodels.formula.api as smf
+import subprocess
+import sys
+import warnings
+warnings.filterwarnings('ignore')
+
+from pathlib import Path
+from IPython.display import Markdown, display
+
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "linearmodels"], check=False)
+from linearmodels.iv import IV2SLS
+
+OUT_DIR = Path('data/output')
+
+hcris   = pd.read_csv(OUT_DIR / 'hcris_clean.csv')
+dup_yr  = pd.read_csv(OUT_DIR / 'dup_hospitals_by_year.csv')
+share_p = pd.read_csv(OUT_DIR / 'share_penalized_by_year.csv')
+iv      = pd.read_csv(OUT_DIR / 'hcris_iv.csv')
+
+def md(s):
+    display(Markdown(s))
+```
+```{python}
+#| include: false
+
+iv['avg_beds_w'] = iv['avg_beds'].clip(
+    lower=iv['avg_beds'].quantile(0.01),
+    upper=iv['avg_beds'].quantile(0.99)
+)
+iv['avg_mcaid_w'] = iv['avg_mcaid_dis'].clip(
+    lower=iv['avg_mcaid_dis'].quantile(0.01),
+    upper=iv['avg_mcaid_dis'].quantile(0.99)
+)
+
+iv_ols = iv.dropna(subset=['price_change', 'net_penalty_1k',
+                            'avg_mcare_100', 'avg_beds_w', 'avg_mcaid_w'])
+
+ols1 = smf.ols('price_change ~ net_penalty_1k',
+               data=iv_ols).fit(cov_type='HC1')
+ols2 = smf.ols('price_change ~ net_penalty_1k + avg_beds_w',
+               data=iv_ols).fit(cov_type='HC1')
+ols3 = smf.ols('price_change ~ net_penalty_1k + avg_beds_w + avg_mcaid_w',
+               data=iv_ols).fit(cov_type='HC1')
+
+fs1 = smf.ols('net_penalty_1k ~ avg_mcare_100',
+              data=iv_ols).fit(cov_type='HC1')
+fs2 = smf.ols('net_penalty_1k ~ avg_mcare_100 + avg_beds_w',
+              data=iv_ols).fit(cov_type='HC1')
+fs3 = smf.ols('net_penalty_1k ~ avg_mcare_100 + avg_beds_w + avg_mcaid_w',
+              data=iv_ols).fit(cov_type='HC1')
+
+rf1 = smf.ols('price_change ~ avg_mcare_100',
+              data=iv_ols).fit(cov_type='HC1')
+rf2 = smf.ols('price_change ~ avg_mcare_100 + avg_beds_w',
+              data=iv_ols).fit(cov_type='HC1')
+rf3 = smf.ols('price_change ~ avg_mcare_100 + avg_beds_w + avg_mcaid_w',
+              data=iv_ols).fit(cov_type='HC1')
+
+iv1 = IV2SLS.from_formula(
+    'price_change ~ 1 + [net_penalty_1k ~ avg_mcare_100]',
+    data=iv_ols
+).fit(cov_type='robust')
+
+iv2 = IV2SLS.from_formula(
+    'price_change ~ 1 + avg_beds_w + [net_penalty_1k ~ avg_mcare_100]',
+    data=iv_ols
+).fit(cov_type='robust')
+
+iv3 = IV2SLS.from_formula(
+    'price_change ~ 1 + avg_beds_w + avg_mcaid_w + [net_penalty_1k ~ avg_mcare_100]',
+    data=iv_ols
+).fit(cov_type='robust')
+
+def make_ols_table(models, var_labels):
+    td = {}
+    for i, m in enumerate(models, 1):
+        col = []
+        for v in var_labels.keys():
+            if v in m.params:
+                col += [f'{m.params[v]:.3f}', f'({m.bse[v]:.3f})']
+            else:
+                col += ['', '']
+        col += [f'{int(m.nobs):,}', f'{m.rsquared:.3f}']
+        td[f'Spec ({i})'] = col
+    idx = []
+    for label in var_labels.values():
+        idx += [label, '']
+    idx += ['N', 'R$^2$']
+    return pd.DataFrame(td, index=idx)
+
+def make_stage_table(models, var_labels, include_fstat=True):
+    td = {}
+    for i, m in enumerate(models, 1):
+        col = []
+        for v in var_labels.keys():
+            if v in m.params:
+                col += [f'{m.params[v]:.3f}', f'({m.bse[v]:.3f})']
+            else:
+                col += ['', '']
+        col += [f'{int(m.nobs):,}', f'{m.rsquared:.3f}']
+        if include_fstat:
+            col += [f'{m.fvalue:.1f}']
+        td[f'Spec ({i})'] = col
+    idx = []
+    for label in var_labels.values():
+        idx += [label, '']
+    idx += ['N', 'R$^2$']
+    if include_fstat:
+        idx += ['F-stat']
+    return pd.DataFrame(td, index=idx)
+
+var_labels = {
+    'net_penalty_1k': 'Net Penalty (\$1000s)',
+    'avg_beds_w'    : 'Avg Beds (pre-2012)',
+    'avg_mcaid_w'   : 'Avg Medicaid Discharges',
+}
+
+stage_labels = {
+    'avg_mcare_100': 'Avg Medicare Discharges (100s)',
+    'avg_beds_w'   : 'Avg Beds (pre-2012)',
+    'avg_mcaid_w'  : 'Avg Medicaid Discharges',
+}
+
+iv_var_labels = {
+    'net_penalty_1k': 'Net Penalty (\$1000s)',
+    'avg_beds_w'    : 'Avg Beds (pre-2012)',
+    'avg_mcaid_w'   : 'Avg Medicaid Discharges',
+}
+
+td_iv = {}
+for i, (ols_m, iv_m) in enumerate(
+        zip([ols1, ols2, ols3], [iv1, iv2, iv3]), 1):
+    col = []
+    for v in iv_var_labels.keys():
+        ols_val = f'{ols_m.params[v]:.3f}' if v in ols_m.params else ''
+        ols_se  = f'({ols_m.bse[v]:.3f})'  if v in ols_m.params else ''
+        iv_val  = f'{iv_m.params[v]:.3f}'  if v in iv_m.params  else ''
+        iv_se   = f'({iv_m.std_errors[v]:.3f})' if v in iv_m.params else ''
+        col += [ols_val, ols_se, iv_val, iv_se]
+    col += [f'{int(ols_m.nobs):,}', f'{int(iv_m.nobs):,}']
+    td_iv[f'Spec ({i})'] = col
+
+idx_iv = []
+for label in iv_var_labels.values():
+    idx_iv += [f'OLS: {label}', '', f'IV:  {label}', '']
+idx_iv += ['N (OLS)', 'N (IV)']
+
+iv_table = pd.DataFrame(td_iv, index=idx_iv)
+```
+
+## 1. Hospitals Filing Multiple Reports in the Same Year
+```{python}
+#| label: q1-fig
+#| fig-cap: "Number of hospitals filing more than one report per year, 2009–2019"
+
+fig, ax = plt.subplots(figsize=(10, 5))
+
+ax.plot(dup_yr['year'], dup_yr['n_hospitals_dup'],
+        marker='o', linewidth=2, color='steelblue')
+
+ax.set_xlabel('Year', fontsize=12)
+ax.set_ylabel('Number of Hospitals', fontsize=12)
+ax.set_title('Hospitals Filing More Than One Report in the Same Year', fontsize=13)
+ax.set_xticks(dup_yr['year'])
+ax.tick_params(axis='x', rotation=45)
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
+ax.grid(axis='y', linestyle='--', alpha=0.5)
+
+plt.tight_layout()
+plt.show()
+```
+```{python}
+md(
+    "**Q1 answer:** The number of hospitals filing duplicate reports ranges from 0 in 2010 "
+    "to a peak of 116 in 2018. This typically happens when hospitals change fiscal years "
+    "and submit two reports covering the same calendar year. Resolving duplicates before "
+    "analysis is essential to avoid double-counting charges, payments, and discharges."
+)
+```
+
+\newpage
+
+## 2. Unique Hospital IDs After Removing Duplicates
+```{python}
+unique_df = pd.read_csv(OUT_DIR / 'unique_hospitals.csv')
+n = unique_df['unique_hospitals'].iloc[0]
+
+md(
+    f"**Q2 answer:** After collapsing to one report per hospital per fiscal year --- preferring "
+    f"final over late over not-yet-submitted reports and taking the most recently submitted "
+    f"record when ties remain --- there are **{n:,}** unique Medicare provider numbers in the "
+    f"data across 2009--2019."
+)
+```
+
+\newpage
+
+## 3. Distribution of Total Charges by Year
+```{python}
+#| label: q3-fig
+#| fig-cap: "Distribution of total charges by year, winsorized at 5th and 95th percentiles"
+
+charges = (
+    hcris[hcris['year'].between(2010, 2019)]
+    [['year', 'tot_charges']]
+    .dropna()
+    .copy()
+)
+
+charges['tot_charges_m'] = charges['tot_charges'] / 1_000_000
+charges['tot_charges_w'] = (
+    charges.groupby('year')['tot_charges_m']
+    .transform(lambda s: s.clip(lower=s.quantile(0.05),
+                                upper=s.quantile(0.95)))
+)
+
+years = sorted(charges['year'].unique())
+data_by_year = [
+    charges.loc[charges['year'] == yr, 'tot_charges_w'].dropna().values
+    for yr in years
+]
+
+fig, ax = plt.subplots(figsize=(12, 6))
+parts = ax.violinplot(data_by_year, positions=range(len(years)),
+                      showmedians=True, showextrema=False)
+for pc in parts['bodies']:
+    pc.set_facecolor('steelblue')
+    pc.set_alpha(0.6)
+parts['cmedians'].set_color('navy')
+parts['cmedians'].set_linewidth(2)
+
+ax.set_xticks(range(len(years)))
+ax.set_xticklabels(years, rotation=45)
+ax.set_xlabel('Year', fontsize=12)
+ax.set_ylabel('Total Charges (Millions, winsorized 5-95%)', fontsize=12)
+ax.set_title('Distribution of Hospital Total Charges by Year', fontsize=13)
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x:,.0f}M'))
+ax.grid(axis='y', linestyle='--', alpha=0.4)
+
+plt.tight_layout()
+plt.show()
+```
+```{python}
+md(
+    "**Q3 answer:** Total charges rise steadily from 2010 to 2019, with both the median "
+    "and upper tail increasing each year. The distribution is right-skewed in every year, "
+    "driven by a small number of large academic hospitals with very high charges."
+)
+```
+
+\newpage
+
+## 4. Distribution of Estimated Prices by Year
+```{python}
+#| label: q4-fig
+#| fig-cap: "Distribution of estimated prices by year, winsorized at 5th and 95th percentiles, positive values only"
+
+prices_panel = (
+    hcris[hcris['year'].between(2010, 2019)]
+    [['year', 'price']]
+    .dropna()
+    .copy()
+)
+prices_panel = prices_panel[prices_panel['price'] > 0]
+prices_panel['price_w'] = (
+    prices_panel.groupby('year')['price']
+    .transform(lambda s: s.clip(lower=s.quantile(0.05),
+                                upper=s.quantile(0.95)))
+)
+
+years_p = sorted(prices_panel['year'].unique())
+data_prices = [
+    prices_panel.loc[prices_panel['year'] == yr, 'price_w'].dropna().values
+    for yr in years_p
+]
+
+fig, ax = plt.subplots(figsize=(12, 6))
+parts = ax.violinplot(data_prices, positions=range(len(years_p)),
+                      showmedians=True, showextrema=False)
+for pc in parts['bodies']:
+    pc.set_facecolor('darkorange')
+    pc.set_alpha(0.6)
+parts['cmedians'].set_color('saddlebrown')
+parts['cmedians'].set_linewidth(2)
+
+ax.set_xticks(range(len(years_p)))
+ax.set_xticklabels(years_p, rotation=45)
+ax.set_xlabel('Year', fontsize=12)
+ax.set_ylabel('Estimated Price (winsorized 5-95%, positive only)', fontsize=12)
+ax.set_title('Distribution of Estimated Hospital Prices by Year', fontsize=13)
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x:,.0f}'))
+ax.grid(axis='y', linestyle='--', alpha=0.4)
+
+plt.tight_layout()
+plt.show()
+```
+```{python}
+md(
+    "**Q4 answer:** Estimated prices drift upward from 2010 to 2019, consistent with "
+    "hospitals gaining leverage in commercial negotiations over time. The distributions "
+    "are more symmetric than total charges since this measure nets out Medicare payments "
+    "and scales by non-Medicare discharges."
+)
+```
+
+\newpage
+
+## 5. Share of Hospitals Penalized Under HRRP and/or VBP
+```{python}
+#| label: q5-fig
+#| fig-cap: "Share of hospitals penalized under HRRP and/or VBP, 2012–2019"
+
+fig, ax = plt.subplots(figsize=(10, 5))
+
+ax.plot(share_p['year'], share_p['share_hrrp'] * 100,
+        marker='o', linewidth=2, label='HRRP Only', color='steelblue')
+ax.plot(share_p['year'], share_p['share_vbp'] * 100,
+        marker='s', linewidth=2, label='VBP Only', color='darkorange')
+ax.plot(share_p['year'], share_p['share_any'] * 100,
+        marker='^', linewidth=2, label='Either Program',
+        color='green', linestyle='--')
+
+ax.set_xlabel('Year', fontsize=12)
+ax.set_ylabel('Share of Hospitals (%)', fontsize=12)
+ax.set_title('Share of Hospitals Penalized Under HRRP and/or VBP', fontsize=13)
+ax.set_xticks(share_p['year'])
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:.0f}%'))
+ax.legend(fontsize=11)
+ax.grid(axis='y', linestyle='--', alpha=0.4)
+ax.set_ylim(0, 75)
+
+plt.tight_layout()
+plt.show()
+```
+```{python}
+md(
+    "**Q5 answer:** Roughly half of hospitals are penalized under at least one program "
+    "each year. HRRP penalization peaks around 2014--2015 then declines as hospitals "
+    "adapted, while VBP stays relatively flat since it mechanically penalizes roughly "
+    "half of participants by design."
+)
+```
+
+\newpage
+
+## 6. OLS Estimates of Net Penalties on Price Changes
+```{python}
+#| label: tbl-q6
+#| tbl-cap: "OLS estimates of the effect of net penalties on price changes"
+#| output: asis
+
+ols_table = make_ols_table([ols1, ols2, ols3], var_labels)
+print(ols_table.to_latex(escape=False))
+```
+
+\newpage
+
+## 7. Net Penalty vs Pre-2012 Medicare Discharges
+```{python}
+#| label: q7-fig
+#| fig-cap: "Net HRRP/VBP penalty vs average pre-2012 Medicare discharges (hundreds)"
+
+plot_iv = iv[iv['net_penalty_1k'] < iv['net_penalty_1k'].quantile(0.99)].copy()
+
+fig, ax = plt.subplots(figsize=(9, 6))
+ax.scatter(plot_iv['avg_mcare_100'], plot_iv['net_penalty_1k'],
+           alpha=0.3, s=15, color='steelblue', rasterized=True)
+
+m_fit, b_fit = np.polyfit(
+    plot_iv['avg_mcare_100'].dropna(),
+    plot_iv.loc[plot_iv['avg_mcare_100'].notna(), 'net_penalty_1k'],
+    1
+)
+x_line = np.linspace(plot_iv['avg_mcare_100'].min(),
+                     plot_iv['avg_mcare_100'].max(), 200)
+ax.plot(x_line, m_fit * x_line + b_fit,
+        color='firebrick', linewidth=2, label='OLS fit')
+
+ax.set_xlabel('Avg Pre-2012 Medicare Discharges (hundreds)', fontsize=12)
+ax.set_ylabel('2012 Net Penalty ($1,000s)', fontsize=12)
+ax.set_title('Net HRRP/VBP Penalty vs Pre-Period Medicare Volume', fontsize=13)
+ax.legend(fontsize=11)
+ax.grid(linestyle='--', alpha=0.4)
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x:,.0f}K'))
+
+plt.tight_layout()
+plt.show()
+```
+
+\newpage
+
+## 8. First Stage and Reduced Form
+```{python}
+#| label: tbl-q8-fs
+#| tbl-cap: "First stage: net penalty on pre-2012 Medicare discharges"
+#| output: asis
+
+fs_table = make_stage_table([fs1, fs2, fs3], stage_labels)
+print(fs_table.to_latex(escape=False))
+```
+```{python}
+#| label: tbl-q8-rf
+#| tbl-cap: "Reduced form: price change on pre-2012 Medicare discharges"
+#| output: asis
+
+rf_table = make_stage_table([rf1, rf2, rf3], stage_labels, include_fstat=False)
+print(rf_table.to_latex(escape=False))
+```
+
+\newpage
+
+## 9. IV Estimates of Net Penalties on Price Changes
+```{python}
+#| label: tbl-q9
+#| tbl-cap: "OLS vs IV estimates of net penalties on price changes"
+#| output: asis
+
+print(iv_table.to_latex(escape=False))
+```
+
+\newpage
+
+## 10. Local Average Treatment Effect
+```{python}
+md(
+    "**Q10 answer:** The IV estimates identify a Local Average Treatment Effect (LATE) "
+    "for compliers --- hospitals whose penalty status was determined by their pre-2012 "
+    "Medicare volume. This is likely mid-sized hospitals at the margin of penalty "
+    "exposure. Very small hospitals with too few Medicare patients to be penalized "
+    "regardless, and very large academic centers penalized regardless of volume, are "
+    "not identified by the instrument. The LATE could differ from the overall ATE if "
+    "large safety-net hospitals respond more aggressively to penalties than the "
+    "mid-sized compliers our instrument captures."
+)
+```
