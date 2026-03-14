@@ -16,3 +16,7 @@ Thumbs.db
 
 # Any local scratch notebooks
 Untitled*.ipynb
+quarto-1.6.39-linux-amd64.tar.gz
+quarto-1.6.39-linux-amd64.deb
+quarto-*.tar.gz
+quarto-*.deb
