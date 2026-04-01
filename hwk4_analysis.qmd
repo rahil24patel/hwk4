@@ -82,12 +82,10 @@ iv1 = IV2SLS.from_formula(
     'price_change ~ 1 + [net_penalty_1k ~ avg_mcare_100]',
     data=iv_ols
 ).fit(cov_type='robust')
-
 iv2 = IV2SLS.from_formula(
     'price_change ~ 1 + avg_beds_w + [net_penalty_1k ~ avg_mcare_100]',
     data=iv_ols
 ).fit(cov_type='robust')
-
 iv3 = IV2SLS.from_formula(
     'price_change ~ 1 + avg_beds_w + avg_mcaid_w + [net_penalty_1k ~ avg_mcare_100]',
     data=iv_ols
@@ -143,29 +141,20 @@ stage_labels = {
     'avg_mcaid_w'  : 'Avg Medicaid Discharges',
 }
 
-iv_var_labels = {
-    'net_penalty_1k': 'Net Penalty (\$1000s)',
-    'avg_beds_w'    : 'Avg Beds (pre-2012)',
-    'avg_mcaid_w'   : 'Avg Medicaid Discharges',
-}
-
 td_iv = {}
-for i, (ols_m, iv_m) in enumerate(
-        zip([ols1, ols2, ols3], [iv1, iv2, iv3]), 1):
+for i, iv_m in enumerate([iv1, iv2, iv3], 1):
     col = []
-    for v in iv_var_labels.keys():
-        ols_val = f'{ols_m.params[v]:.3f}' if v in ols_m.params else ''
-        ols_se  = f'({ols_m.bse[v]:.3f})'  if v in ols_m.params else ''
-        iv_val  = f'{iv_m.params[v]:.3f}'  if v in iv_m.params  else ''
-        iv_se   = f'({iv_m.std_errors[v]:.3f})' if v in iv_m.params else ''
-        col += [ols_val, ols_se, iv_val, iv_se]
-    col += [f'{int(ols_m.nobs):,}', f'{int(iv_m.nobs):,}']
+    for v in ['net_penalty_1k', 'avg_beds_w', 'avg_mcaid_w']:
+        iv_val = f'{iv_m.params[v]:.3f}'       if v in iv_m.params else ''
+        iv_se  = f'({iv_m.std_errors[v]:.3f})' if v in iv_m.params else ''
+        col += [iv_val, iv_se]
+    col += [f'{int(iv_m.nobs):,}']
     td_iv[f'Spec ({i})'] = col
 
 idx_iv = []
-for label in iv_var_labels.values():
-    idx_iv += [f'OLS: {label}', '', f'IV:  {label}', '']
-idx_iv += ['N (OLS)', 'N (IV)']
+for label in ['Net Penalty (\$1000s)', 'Avg Beds (pre-2012)', 'Avg Medicaid Discharges']:
+    idx_iv += [label, '']
+idx_iv += ['N']
 
 iv_table = pd.DataFrame(td_iv, index=idx_iv)
 ```
@@ -176,10 +165,8 @@ iv_table = pd.DataFrame(td_iv, index=idx_iv)
 #| fig-cap: "Number of hospitals filing more than one report per year, 2009–2019"
 
 fig, ax = plt.subplots(figsize=(10, 5))
-
 ax.plot(dup_yr['year'], dup_yr['n_hospitals_dup'],
         marker='o', linewidth=2, color='steelblue')
-
 ax.set_xlabel('Year', fontsize=12)
 ax.set_ylabel('Number of Hospitals', fontsize=12)
 ax.set_title('Hospitals Filing More Than One Report in the Same Year', fontsize=13)
@@ -187,16 +174,20 @@ ax.set_xticks(dup_yr['year'])
 ax.tick_params(axis='x', rotation=45)
 ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
 ax.grid(axis='y', linestyle='--', alpha=0.5)
-
 plt.tight_layout()
 plt.show()
 ```
 ```{python}
+_peak_yr = int(dup_yr.loc[dup_yr['n_hospitals_dup'].idxmax(), 'year'])
+_peak_n  = int(dup_yr['n_hospitals_dup'].max())
+_min_yr  = int(dup_yr.loc[dup_yr['n_hospitals_dup'].idxmin(), 'year'])
+_min_n   = int(dup_yr['n_hospitals_dup'].min())
+
 md(
-    "**Q1 answer:** The number of hospitals filing duplicate reports ranges from 0 in 2010 "
-    "to a peak of 116 in 2018. This typically happens when hospitals change fiscal years "
-    "and submit two reports covering the same calendar year. Resolving duplicates before "
-    "analysis is essential to avoid double-counting charges, payments, and discharges."
+    f"**Q1 answer:** The number of hospitals filing more than one report in the same year "
+    f"ranges from a low of {_min_n:,} in {_min_yr} to a peak of {_peak_n:,} in {_peak_yr}. "
+    f"Duplicate reports typically occur when a hospital changes its fiscal year and ends "
+    f"up with two cost reports falling in the same calendar year."
 )
 ```
 
@@ -208,10 +199,8 @@ unique_df = pd.read_csv(OUT_DIR / 'unique_hospitals.csv')
 n = unique_df['unique_hospitals'].iloc[0]
 
 md(
-    f"**Q2 answer:** After collapsing to one report per hospital per fiscal year --- preferring "
-    f"final over late over not-yet-submitted reports and taking the most recently submitted "
-    f"record when ties remain --- there are **{n:,}** unique Medicare provider numbers in the "
-    f"data across 2009--2019."
+    f"**Q2 answer:** After collapsing to one report per hospital per fiscal year, "
+    f"there are {n:,} unique Medicare provider numbers in the data across 2009--2019."
 )
 ```
 
@@ -228,7 +217,6 @@ charges = (
     .dropna()
     .copy()
 )
-
 charges['tot_charges_m'] = charges['tot_charges'] / 1_000_000
 charges['tot_charges_w'] = (
     charges.groupby('year')['tot_charges_m']
@@ -250,7 +238,6 @@ for pc in parts['bodies']:
     pc.set_alpha(0.6)
 parts['cmedians'].set_color('navy')
 parts['cmedians'].set_linewidth(2)
-
 ax.set_xticks(range(len(years)))
 ax.set_xticklabels(years, rotation=45)
 ax.set_xlabel('Year', fontsize=12)
@@ -258,15 +245,14 @@ ax.set_ylabel('Total Charges (Millions, winsorized 5-95%)', fontsize=12)
 ax.set_title('Distribution of Hospital Total Charges by Year', fontsize=13)
 ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x:,.0f}M'))
 ax.grid(axis='y', linestyle='--', alpha=0.4)
-
 plt.tight_layout()
 plt.show()
 ```
 ```{python}
 md(
-    "**Q3 answer:** Total charges rise steadily from 2010 to 2019, with both the median "
-    "and upper tail increasing each year. The distribution is right-skewed in every year, "
-    "driven by a small number of large academic hospitals with very high charges."
+    "**Q3 answer:** Total charges rise steadily each year, with both the median and upper "
+    "tail increasing. The distribution is right-skewed in every year, driven by a small "
+    "number of large academic hospitals with very high charges."
 )
 ```
 
@@ -304,7 +290,6 @@ for pc in parts['bodies']:
     pc.set_alpha(0.6)
 parts['cmedians'].set_color('saddlebrown')
 parts['cmedians'].set_linewidth(2)
-
 ax.set_xticks(range(len(years_p)))
 ax.set_xticklabels(years_p, rotation=45)
 ax.set_xlabel('Year', fontsize=12)
@@ -312,7 +297,6 @@ ax.set_ylabel('Estimated Price (winsorized 5-95%, positive only)', fontsize=12)
 ax.set_title('Distribution of Estimated Hospital Prices by Year', fontsize=13)
 ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x:,.0f}'))
 ax.grid(axis='y', linestyle='--', alpha=0.4)
-
 plt.tight_layout()
 plt.show()
 ```
@@ -330,36 +314,34 @@ md(
 ## 5. Share of Hospitals Penalized Under HRRP and/or VBP
 ```{python}
 #| label: q5-fig
-#| fig-cap: "Share of hospitals penalized under HRRP and/or VBP, 2012–2019"
+#| fig-cap: "Share of hospitals penalized (net penalty < 0) under HRRP/VBP, 2012–2019"
 
 fig, ax = plt.subplots(figsize=(10, 5))
-
-ax.plot(share_p['year'], share_p['share_hrrp'] * 100,
-        marker='o', linewidth=2, label='HRRP Only', color='steelblue')
-ax.plot(share_p['year'], share_p['share_vbp'] * 100,
-        marker='s', linewidth=2, label='VBP Only', color='darkorange')
 ax.plot(share_p['year'], share_p['share_any'] * 100,
-        marker='^', linewidth=2, label='Either Program',
-        color='green', linestyle='--')
-
+        marker='o', linewidth=2, color='steelblue')
 ax.set_xlabel('Year', fontsize=12)
-ax.set_ylabel('Share of Hospitals (%)', fontsize=12)
-ax.set_title('Share of Hospitals Penalized Under HRRP and/or VBP', fontsize=13)
+ax.set_ylabel('Percent Penalized', fontsize=12)
+ax.set_title('Share of Hospitals Penalized (Net Penalty < 0)', fontsize=13)
 ax.set_xticks(share_p['year'])
 ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:.0f}%'))
-ax.legend(fontsize=11)
 ax.grid(axis='y', linestyle='--', alpha=0.4)
-ax.set_ylim(0, 75)
-
+ax.set_ylim(0, 100)
 plt.tight_layout()
 plt.show()
 ```
 ```{python}
+_pct_2012 = round(float(share_p.loc[share_p['year'] == 2012, 'share_any'].values[0]) * 100)
+_pct_2013 = round(float(share_p.loc[share_p['year'] == 2013, 'share_any'].values[0]) * 100)
+_pct_last = round(float(share_p.loc[share_p['year'] == share_p['year'].max(), 'share_any'].values[0]) * 100)
+_pct_max  = round(float(share_p['share_any'].max()) * 100)
+_yr_max   = int(share_p.loc[share_p['share_any'].idxmax(), 'year'])
+
 md(
-    "**Q5 answer:** Roughly half of hospitals are penalized under at least one program "
-    "each year. HRRP penalization peaks around 2014--2015 then declines as hospitals "
-    "adapted, while VBP stays relatively flat since it mechanically penalizes roughly "
-    "half of participants by design."
+    f"**Q5 answer:** About {_pct_2012}% of hospitals faced a net penalty in 2012, the first "
+    f"year HRRP took effect. The share rises to {_pct_2013}% in 2013 as VBP came online "
+    f"alongside HRRP, peaking at {_pct_max}% in {_yr_max}. From there, the share levels off "
+    f"and ends at roughly {_pct_last}% by 2019, suggesting most hospitals remained vulnerable "
+    f"to combined payment reductions throughout the later years of both programs."
 )
 ```
 
@@ -373,6 +355,25 @@ md(
 
 ols_table = make_ols_table([ols1, ols2, ols3], var_labels)
 print(ols_table.to_latex(escape=False))
+```
+```{python}
+_coef1 = ols1.params['net_penalty_1k']
+_coef3 = ols3.params['net_penalty_1k']
+_n     = int(ols1.nobs)
+_r2_1  = ols1.rsquared
+_r2_3  = ols3.rsquared
+
+md(
+    f"**Q6 answer:** Across all three OLS specifications the net penalty coefficient is small "
+    f"and negative, ranging from {_coef1:.3f} in the simple specification to {_coef3:.3f} "
+    f"with full controls, each estimated on {_n:,} hospitals. Since more negative means a "
+    f"larger penalty, a negative coefficient indicates that more heavily penalized hospitals "
+    f"saw slightly smaller price increases on average. The R-squared values range from "
+    f"{_r2_1:.3f} to {_r2_3:.3f}, meaning the penalty variable explains very little of the "
+    f"variation in price changes. OLS is probably biased here because penalty assignment "
+    f"isn't random. Sicker patient populations tend to drive both higher penalties and "
+    f"lower commercial pricing power."
+)
 ```
 
 \newpage
@@ -397,14 +398,12 @@ x_line = np.linspace(plot_iv['avg_mcare_100'].min(),
                      plot_iv['avg_mcare_100'].max(), 200)
 ax.plot(x_line, m_fit * x_line + b_fit,
         color='firebrick', linewidth=2, label='OLS fit')
-
 ax.set_xlabel('Avg Pre-2012 Medicare Discharges (hundreds)', fontsize=12)
-ax.set_ylabel('2012 Net Penalty ($1,000s)', fontsize=12)
+ax.set_ylabel('2012 Net Penalty (\$1,000s)', fontsize=12)
 ax.set_title('Net HRRP/VBP Penalty vs Pre-Period Medicare Volume', fontsize=13)
 ax.legend(fontsize=11)
 ax.grid(linestyle='--', alpha=0.4)
 ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x:,.0f}K'))
-
 plt.tight_layout()
 plt.show()
 ```
@@ -428,16 +427,51 @@ print(fs_table.to_latex(escape=False))
 rf_table = make_stage_table([rf1, rf2, rf3], stage_labels, include_fstat=False)
 print(rf_table.to_latex(escape=False))
 ```
+```{python}
+_fs_coef  = fs1.params['avg_mcare_100']
+_fs_fstat = fs1.fvalue
+_rf_coef  = rf1.params['avg_mcare_100']
+_rf_se    = rf1.bse['avg_mcare_100']
+
+md(
+    f"**Q8 answer:** The first stage shows that hospitals with more pre-2012 Medicare "
+    f"discharges received larger net penalties, with a coefficient of {_fs_coef:.3f} per "
+    f"100 additional discharges. The F-statistic of {_fs_fstat:.1f} well exceeds the normal "
+    f"threshold of 10, confirming that pre-period Medicare volume is a relevant instrument "
+    f"for penalty assignment. The reduced form coefficient of {_rf_coef:.3f} (SE {_rf_se:.3f}) "
+    f"shows that hospitals with higher Medicare volume also saw larger price increases, "
+    f"which is the identifying variation the IV strategy uses to recover a causal estimate."
+)
+```
 
 \newpage
 
 ## 9. IV Estimates of Net Penalties on Price Changes
 ```{python}
 #| label: tbl-q9
-#| tbl-cap: "OLS vs IV estimates of net penalties on price changes"
+#| tbl-cap: "IV estimates of net penalties on price changes"
 #| output: asis
 
 print(iv_table.to_latex(escape=False))
+```
+```{python}
+_iv_coef1 = iv1.params['net_penalty_1k']
+_iv_se1   = iv1.std_errors['net_penalty_1k']
+_iv_coef3 = iv3.params['net_penalty_1k']
+_iv_se3   = iv3.std_errors['net_penalty_1k']
+_ols_coef = ols1.params['net_penalty_1k']
+
+md(
+    f"**Q9 answer:** The IV estimate of the net penalty coefficient is {_iv_coef1:.3f} "
+    f"(SE {_iv_se1:.3f}) in the simple specification and {_iv_coef3:.3f} (SE {_iv_se3:.3f}) "
+    f"with full controls, compared to the OLS estimate of {_ols_coef:.3f}. The IV flips "
+    f"the sign, suggesting that once penalty assignment is instrumented by pre-period "
+    f"Medicare volume, hospitals facing larger penalties actually increased their commercial "
+    f"prices more. This reversal is consistent with negative selection in OLS. Hospitals "
+    f"penalized more heavily tend to serve sicker populations and have weaker commercial "
+    f"pricing power, making OLS downward biased. The standard errors widen considerably "
+    f"with added controls, reflecting the precision cost of the IV approach."
+)
 ```
 
 \newpage
@@ -445,13 +479,14 @@ print(iv_table.to_latex(escape=False))
 ## 10. Local Average Treatment Effect
 ```{python}
 md(
-    "**Q10 answer:** The IV estimates identify a Local Average Treatment Effect (LATE) "
-    "for compliers --- hospitals whose penalty status was determined by their pre-2012 "
-    "Medicare volume. This is likely mid-sized hospitals at the margin of penalty "
-    "exposure. Very small hospitals with too few Medicare patients to be penalized "
-    "regardless, and very large academic centers penalized regardless of volume, are "
-    "not identified by the instrument. The LATE could differ from the overall ATE if "
-    "large safety-net hospitals respond more aggressively to penalties than the "
-    "mid-sized compliers our instrument captures."
+    "**Q10 answer:** The IV estimates identify a Local Average Treatment Effect for compliers. "
+    "Hospitals whose penalty exposure was driven by their pre-2012 Medicare patient volume. "
+    "This captures medium sized hospitals at the margin. They are large enough to face meaningful "
+    "penalties as Medicare volume grew, but not so dominant that their penalty status was "
+    "predetermined regardless of volume. Very small hospitals with too few Medicare patients "
+    "to be penalized under any scenario, and very large academic centers that would be "
+    "penalized regardless, are not identified by the instrument. The LATE could differ "
+    "meaningfully from the average treatment effect if those larger safety-net hospitals "
+    "respond more aggressively to penalties than the mid-sized compliers the instrument captures."
 )
 ```
